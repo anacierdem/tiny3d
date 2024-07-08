@@ -789,3 +789,97 @@ RDPQ_Triangle_Send_End:
     j RSPQCmd_RdpAppendBuffer
     lw a0, %lo(RDPQ_CURRENT)
     .endfunc
+
+    #############################################################
+    # RDPQ_Send
+    #
+    # Internal API for overlays that generate RDP commands. It
+    # runs a DMA transfer from DMEM to the RDP ouput buffer in RDRAM
+    # to copy some new RDP commands, and tell RDP to run them.
+    #
+    # ARGS:
+    #   s4:                 buffer in DMEM containing RDP commands to send to RDP
+    #   s3:                 pointer to the end of the buffer in DMEM  (s3-s4 = size)
+    #############################################################
+RDPQ_Send:
+    #define rdram_cur   s0
+    #define rdram_next  a0
+    #define sentinel    a2
+    #define buf_idx     t4
+    #define next_func   t5
+
+    # Calculate buffer size and DMA transfer length
+    #ifndef NDEBUG
+    andi s3, 0xFFF
+    andi s4, 0xFFF
+    assert_ge s3, s4, RDPQ_ASSERT_SEND_INVALID_SIZE
+    #endif
+    sub rspq_cmd_size, s3, s4
+    beqz rspq_cmd_size, JrRa   # Exit if s3==s4 (0 byte transfer)
+    move ra2, ra
+
+    # Fetch current pointer in RDRAM where to write the RDP command
+    # This is normally the same value that's in DP_END (unless we
+    # are holding writes because there is a SYNC_FULL pending).
+    lw rdram_cur, %lo(RDPQ_CURRENT)
+    and rdram_cur, 0xFFFFFF
+
+    # Fetch the sentinel (end of buffer). Check whether there is
+    # enough room to add the new command. If so, run the DMA transfer,
+    # and then call RSPQCmd_RdpAppendBuffer to update DP_END to include
+    # the new commands.
+    lw sentinel, %lo(RDPQ_SENTINEL)
+    sub sentinel, rspq_cmd_size
+    bge sentinel, rdram_cur, do_dma
+    li next_func, RSPQCmd_RdpAppendBuffer
+
+    # There is not enough space in the current buffer, so we will need to switch
+    # to the next. Since the RDP DMA can hold two buffers in total, and we have two
+    # buffers, we need to make sure that we are not overwriting the buffer that
+    # is currently playing. To do so, wait for the END_VALID to become 0, which means
+    # that only one buffer might be peInding.
+    # Also, in case there is a SYNC_FULL ongoing, we need to wait for it to finish before
+    # enqueuing a new buffer. RDPQ_SYNCFULL_ONGOING is set to DP_STATUS_BUSY in this case,
+    # so using that bit in the RSPQ_RdpWait wait mask will make sure we wait for the RDP
+    # to be idle.
+    lbu t3, %lo(RDPQ_SYNCFULL_ONGOING)
+    jal RSPQ_RdpWait
+    ori t3, DP_STATUS_END_VALID
+
+    # Switch to the next dynamic buffer.
+    # Since there are two of them, also switch between
+    # them so next time we will pick the other one.
+    lw rdram_cur, %lo(RDPQ_DYNAMIC_BUFFERS) + 4
+    lw t1, %lo(RDPQ_DYNAMIC_BUFFERS) + 0
+    sw rdram_cur, %lo(RDPQ_DYNAMIC_BUFFERS) + 0
+    sw t1, %lo(RDPQ_DYNAMIC_BUFFERS) + 4
+
+    # Calculate new sentinel (end of buffer)
+    add sentinel, rdram_cur, RDPQ_DYNAMIC_BUFFER_SIZE
+
+    # Run the DMA transfer now, and after that, run RSPQCmd_RdpSetBuffer via
+    # tailcall. Prepare a1 for it, containing the pointer to the new buffer,
+    # which will be written into DP_START.
+    move a1, rdram_cur
+    li next_func, RSPQCmd_RdpSetBuffer
+
+do_dma:
+    # Start the transfer. Will tail-call to either RSPQCmd_RdpSetBuffer or
+    # RSPQCmd_RdpAppendBuffer (see above). For both, we need to prepare
+    # rdram_next (aka a0) with the updated pointer to RDRAM that will be
+    # written to DP_END to run the newly written commands.
+    add t0, rspq_cmd_size, -1
+    jal DMAOut
+    add rdram_next, rdram_cur, rspq_cmd_size
+
+    # Jump to continuation function (either RSPQCmd_RdpSetBuffer or
+    # RSPQCmd_RdpAppendBuffer), after recovering original return address.
+    jr next_func
+    move ra, ra2
+
+
+    #undef rdram_cur
+    #undef rdram_next
+    #undef sentinel
+    #undef buf_idx
+    #undef next_func

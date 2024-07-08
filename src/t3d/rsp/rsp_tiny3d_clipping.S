@@ -32,7 +32,7 @@
 #define RDPQ_DYNAMIC_BUFFER_SIZE 65536
 #include <rsp_queue.inc>
 #include <rdpq_macros.h>
-#include "./rspq_triangle.inc"
+#include "./asm/rspq_triangle.inc"
 
 .set noreorder
 .set noat
@@ -121,6 +121,7 @@
     RSPQ_DefineCommand RSPQ_Loop, 4
     RSPQ_DefineCommand RSPQ_Loop, 4
     RSPQ_DefineCommand RSPQ_Loop, 4
+    RSPQ_DefineCommand RSPQ_Loop, 12
   RSPQ_EndOverlayHeader
 
   RSPQ_BeginSavedState

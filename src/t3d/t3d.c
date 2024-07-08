@@ -6,6 +6,8 @@
 #include "rsp/rsp_tiny3d.h"
 
 _Static_assert(RSP_T3D_TEMP_STATE_MEM_END == RSP_T3D_CLIP_TEMP_STATE_MEM_END, "Overlay data doesn't match!");
+_Static_assert(RSP_T3D_TEMP_STATE_MEM_END == RSP_T3D_PTCL_TEMP_STATE_MEM_END, "Overlay data doesn't match!");
+
 _Static_assert(RSP_T3D_CODE_RDPQ_Triangle_Send_Async == RSP_T3D_CODE_CLIP_RDPQ_Triangle_Send_Async, "Overlay code doesn't match!");
 _Static_assert(RSP_T3D_CODE_RDPQ_Triangle_Send_End == RSP_T3D_CODE_CLIP_RDPQ_Triangle_Send_End, "Overlay code doesn't match!");
 _Static_assert(RSP_T3D_CODE_RSPQCmd_RdpAppendBuffer == RSP_T3D_CODE_CLIP_RSPQCmd_RdpAppendBuffer, "Overlay code doesn't match!");
@@ -16,9 +18,12 @@ _Static_assert(RSP_T3D_CODE_RSPQCmd_RdpAppendBuffer < RSP_T3D_CODE_CLIPPING_CODE
 
 _Static_assert(RSP_T3D_CODE_CLIPPING_CODE_TARGET % 8 == 0, "Clipping code must be aligned to 8 bytes!");
 _Static_assert(RSP_T3D_CODE_CLIPPING_CODE_TARGET == RSP_T3D_CODE_CLIP_clipTriangle, "Clipping code and target must have the same address");
+_Static_assert(RSP_T3D_CODE_CLIPPING_CODE_TARGET == RSP_T3D_CODE_PTCL_T3DCmd_DrawParticles, "Particle code and target must have the same address");
+_Static_assert(RSP_T3D_CODE_CLIPPING_CODE_TARGET == RSP_T3D_CODE_T3DCmd_VertLoad, "Vertex-Load and target must have the same address");
 
 DEFINE_RSP_UCODE(rsp_tiny3d);
 DEFINE_RSP_UCODE(rsp_tiny3d_clipping);
+DEFINE_RSP_UCODE(rsp_tiny3d_particles);
 uint32_t T3D_RSP_ID = 0;
 
 #define MAX(a,b) (a) > (b) ? (a) : (b)
@@ -30,6 +35,8 @@ uint32_t T3D_RSP_ID = 0;
 
 static T3DViewport *currentViewport = NULL;
 static T3DMat4FP *matrixStack = NULL;
+static char* rspVertexFuncBackup = NULL;
+static uint32_t rspVertexFuncSize = 0;
 
 void t3d_init(T3DInitParams params)
 {
@@ -45,6 +52,7 @@ void t3d_init(T3DInitParams params)
   uint32_t *stackPtr = (uint32_t*)((char*)state + ((RSP_T3D_MATRIX_STACK_PTR - RSP_T3D_STATE_MEM_START) & 0xFFFF));
   *stackPtr = (uint32_t)UncachedAddr(matrixStack);
 
+  // Set initial uvgen/vertexFX function to the default one
   uint16_t *uvGenFunc = (uint16_t*)((char*)state + ((RSP_T3D_VERTEX_FX_FUNC - RSP_T3D_STATE_MEM_START) & 0xFFFF));
   *uvGenFunc = RSP_T3D_CODE_VertexFX_None & 0xFFF;
 
@@ -56,6 +64,15 @@ void t3d_init(T3DInitParams params)
   clipAddrPtr[1] = (uint32_t)PhysicalAddr(rsp_tiny3d.code + (RSP_T3D_CODE_CLIPPING_CODE_TARGET & 0xFFF));
   *clipSizePtr = RSP_T3D_CODE_CLIP_OVERLAY_CODE_END - RSP_T3D_CODE_CLIP_clipTriangle + 7;
 
+  // backup the original vertex loading function, that part can be replaced at runtime both in IMEM & RDRAM
+  uint8_t *vertexFuncAddr = rsp_tiny3d.code + (RSP_T3D_CODE_T3DCmd_VertLoad & 0xFFF);
+  rspVertexFuncSize = RSP_T3D_CODE_T3DCmd_SetScreenSize - RSP_T3D_CODE_T3DCmd_VertLoad + 7;
+  rspVertexFuncSize = (rspVertexFuncSize + 7) & ~7;
+
+  rspVertexFuncBackup = malloc_uncached(rspVertexFuncSize);
+  memcpy(rspVertexFuncBackup, vertexFuncAddr, rspVertexFuncSize);
+
+  // finally, register the overlay with rspq. after this we should no longer touch the state on the CPU
   T3D_RSP_ID = rspq_overlay_register(&rsp_tiny3d);
 
   // It's very common to run into under-flows, to avoid costly checks
@@ -67,6 +84,8 @@ void t3d_init(T3DInitParams params)
 
 void t3d_destroy(void)
 {
+  free_uncached(matrixStack);
+  free_uncached(rspVertexFuncBackup);
   rspq_overlay_unregister(T3D_RSP_ID);
   T3D_RSP_ID = 0;
 }
@@ -220,6 +239,28 @@ void t3d_state_set_drawflags(enum T3DDrawFlags drawFlags)
   uint32_t cmd = drawFlags | RDPQ_CMD_TRI;
   cmd = 0xC000 | (cmd << 8);
   rspq_write(T3D_RSP_ID, T3D_CMD_DRAWFLAGS, cullMask, cmd);
+}
+
+void t3d_pipeline_load(enum T3DPipeline pipeline) {
+  uint32_t addrIn, size;
+  uint32_t addrImem = RSP_T3D_CODE_T3DCmd_VertLoad & 0xFFFF;
+  uint32_t addrOut = PhysicalAddr(rsp_tiny3d.code + (addrImem & 0xFFF));
+
+  switch (pipeline) {
+    case T3D_PIPELINE_DEFAULT: default:
+      size = rspVertexFuncSize;
+      addrIn = PhysicalAddr(rspVertexFuncBackup);
+    break;
+    case T3D_PIPELINE_PARTICLES:
+      size = RSP_T3D_CODE_PTCL_T3DCmd_DrawParticles_End - RSP_T3D_CODE_PTCL_T3DCmd_DrawParticles;
+      size = (size + 7) & ~7;
+      addrIn = PhysicalAddr(rsp_tiny3d_particles.code + (addrImem & 0xFFF));
+    break;
+  }
+
+  rspq_write(T3D_RSP_ID, T3D_CMD_LOAD_UCODE,
+    addrIn, addrOut, (addrImem << 16) | size
+  );
 }
 
 void t3d_state_set_vertex_fx(enum T3DVertexFX func, int16_t arg0, int16_t arg1)

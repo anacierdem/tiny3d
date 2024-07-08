@@ -31,7 +31,7 @@
 #define RDPQ_DYNAMIC_BUFFER_SIZE 65536
 #include <rsp_queue.inc>
 #include <rdpq_macros.h>
-#include "./rspq_triangle.inc"
+#include "./asm/rspq_triangle.inc"
 
 .set noreorder
 .set noat
@@ -120,6 +120,7 @@
     RSPQ_DefineCommand T3DCmd_SetFogRange, 8
     RSPQ_DefineCommand T3DCmd_SetFogState, 4
     RSPQ_DefineCommand T3DCmd_TriSync, 4
+    RSPQ_DefineCommand T3DCmd_LoadUcode, 12
   RSPQ_EndOverlayHeader
 
   RSPQ_BeginSavedState
@@ -668,6 +669,17 @@ T3DCmd_TriSync:
   addiu $t0, $t0, -1
   sb $zero, %lo(CLIP_CODE_ADDR)($zero)
   j RDPQ_Triangle_Send_End
+  ori $ra, $zero, %lo(RSPQ_Loop)
+
+T3DCmd_LoadUcode:
+  andi $t0, $a2, 65535
+  addiu $t2, $zero, 12
+  or $s0, $zero, $a0
+  srl $s4, $a2, 16
+  jal DMAExec ## Args: $t0, $t1, $s0, $s4, $t2
+  addiu $t0, $t0, -1
+  or $s0, $zero, $a1
+  j DMAOutAsync
   ori $ra, $zero, %lo(RSPQ_Loop)
 
 OVERLAY_CODE_END:

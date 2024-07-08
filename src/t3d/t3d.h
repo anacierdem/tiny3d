@@ -30,7 +30,7 @@ enum T3DCmd {
   T3D_CMD_FOG_RANGE    = 0xA,
   T3D_CMD_FOG_STATE    = 0xB,
   T3D_CMD_TRI_SYNC     = 0xC,
-  //                   = 0xD,
+  T3D_CMD_LOAD_UCODE   = 0xD,
   //                   = 0xE,
   //                   = 0xF,
 };
@@ -75,6 +75,12 @@ enum T3DVertexFX {
   T3D_VERTEX_FX_CELSHADE_COLOR = 2,
   T3D_VERTEX_FX_CELSHADE_ALPHA = 3,
   T3D_VERTEX_FX_OUTLINE        = 4,
+};
+
+// Pipelines, change the available function in the ucode
+enum T3DPipeline {
+  T3D_PIPELINE_DEFAULT   = 0,
+  T3D_PIPELINE_PARTICLES = 1,
 };
 
 /**
@@ -249,6 +255,27 @@ void t3d_tri_draw(uint32_t v0, uint32_t v1, uint32_t v2);
 inline static void t3d_tri_sync() {
   rspq_write(T3D_RSP_ID, T3D_CMD_TRI_SYNC, 0);
 }
+
+inline static void t3d_particles_draw(void *data, int dataSize, uint32_t particleSize) {
+  rspq_write(T3D_RSP_ID, T3D_CMD_VERT_LOAD,
+    dataSize, PhysicalAddr(data) | (particleSize << 24),
+    0
+  );
+}
+
+/**
+ * Loads a new pipeline to be used.
+ * This will replace the vertex related function allowing for different functionality.
+ *
+ * By default this will be the 3d vertex pipeline, which let's you load vertices.
+ * This includes 't3d_vert_load' and 't3d_tri_draw'.
+ *
+ * The second pipeline is the particle pipeline, which allows for direct particle drawing.
+ * This will replace parts of the ucode making functions like 't3d_vert_load' unavailable.
+ *
+ * @param pipeline pipeline to load
+ */
+void t3d_pipeline_load(enum T3DPipeline pipeline);
 
 /**
  * Directly loads a matrix, overwriting the current stack position.
