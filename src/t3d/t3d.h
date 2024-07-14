@@ -256,10 +256,10 @@ inline static void t3d_tri_sync() {
   rspq_write(T3D_RSP_ID, T3D_CMD_TRI_SYNC, 0);
 }
 
-inline static void t3d_particles_draw(void *data, int dataSize, uint32_t particleSize) {
+inline static void t3d_particles_draw(void *data, int dataSize, uint32_t particleSize, uint32_t imgSize) {
   rspq_write(T3D_RSP_ID, T3D_CMD_VERT_LOAD,
     dataSize, PhysicalAddr(data) | (particleSize << 24),
-    0
+    imgSize
   );
 }
 

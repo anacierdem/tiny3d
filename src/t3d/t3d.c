@@ -252,7 +252,7 @@ void t3d_pipeline_load(enum T3DPipeline pipeline) {
       addrIn = PhysicalAddr(rspVertexFuncBackup);
     break;
     case T3D_PIPELINE_PARTICLES:
-      size = RSP_T3D_CODE_PTCL_T3DCmd_DrawParticles_End - RSP_T3D_CODE_PTCL_T3DCmd_DrawParticles;
+      size = RSP_T3D_CODE_PTCL_OVERLAY_CODE_END - RSP_T3D_CODE_PTCL_T3DCmd_DrawParticles;
       size = (size + 7) & ~7;
       addrIn = PhysicalAddr(rsp_tiny3d_particles.code + (addrImem & 0xFFF));
     break;

@@ -1,5 +1,5 @@
 #define TRI_BUFFER_COUNT 70
-#define LIGHT_COUNT 8
+#define LIGHT_COUNT 4
 
 // settings for RDPQ_Triangle
 #define RDPQ_TRIANGLE_CUSTOM_VTX 1
@@ -56,6 +56,7 @@ state
   extern u16 RSPQ_Loop;
   extern u16 RSPQ_SCRATCH_MEM;
   extern u16 CLIPPING_CODE_TARGET;
+  extern u32 RDPQ_SCISSOR_RECT;
 
   alignas(8) vec16 MATRIX_PROJ[4];   // projection matrix
   alignas(8) vec16 MATRIX_MVP[4];    // view * model * projection
