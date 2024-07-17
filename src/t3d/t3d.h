@@ -49,6 +49,19 @@ typedef struct {
 
 _Static_assert(sizeof(T3DVertPacked) == 0x20, "T3DVertPacked has wrong size");
 
+typedef struct {
+  int8_t posA[3];
+  int8_t sizeA;
+  int8_t posB[3];
+  int8_t sizeB;
+  uint8_t colorA[3];
+  int8_t texA;
+  uint8_t colorB[3];
+  int8_t texB;
+}  __attribute__((packed, aligned(__alignof__(uint32_t)))) T3DParticlePacked;
+
+_Static_assert(sizeof(T3DParticlePacked) == 16, "T3DParticlePacked size mismatch");
+
 enum T3DDrawFlags {
   T3D_FLAG_DEPTH      = 1 << 0,
   T3D_FLAG_TEXTURED   = 1 << 1,
@@ -256,13 +269,6 @@ inline static void t3d_tri_sync() {
   rspq_write(T3D_RSP_ID, T3D_CMD_TRI_SYNC, 0);
 }
 
-inline static void t3d_particles_draw(void *data, int dataSize, uint32_t particleSize, uint32_t imgSize) {
-  rspq_write(T3D_RSP_ID, T3D_CMD_VERT_LOAD,
-    dataSize, PhysicalAddr(data) | (particleSize << 24),
-    imgSize
-  );
-}
-
 /**
  * Loads a new pipeline to be used.
  * This will replace the vertex related function allowing for different functionality.
@@ -439,6 +445,40 @@ static inline void* t3d_segment_placeholder(uint8_t segmentId) {
  */
 static inline void* t3d_segment_address(uint8_t segmentId, void* ptr) {
   return (void*)(PhysicalAddr(ptr) | (segmentId << (8*3 + 2)));
+}
+
+/**
+ * Draws a buffer of colored particles.
+ * NOTE: This requires the particle pipeline to be loaded. (see 't3d_pipeline_load')
+ *
+ * @param particles pointer to the particle buffer (must be uncached)
+ * @param count amount of particles, up to 300 and must be multiple of 2
+ */
+inline static void t3d_particles_draw_color(T3DParticlePacked *particles, int count) {
+  rspq_write(T3D_RSP_ID, T3D_CMD_VERT_LOAD,
+     sizeof(T3DParticlePacked) * count/2, PhysicalAddr(particles), 0
+  );
+}
+
+/**
+ * Sets the base size and max. size of the particles.
+ * NOTE: This requires the particle pipeline to be loaded. (see 't3d_pipeline_load')
+ *
+ * Internally the base-size gets added to the per-particle size.
+ * After which is it masked and shifted.
+ * So: 'size = abs((sizeAdd + baseSize) & sizeMask - sizeSub)'
+ * This will cause the size oscillate between 1 and maxSize.
+ *
+ * If you don't need any additional size, use 't3d_particles_set_size(0, 0xFF, 0)'.
+ *
+ * @param baseSize size that gets added on top of the per-particle size
+ * @param sizeMask masks the size after that
+ * @param sizeSub subtracts this value from the result
+ */
+inline static void t3d_particles_set_params(int8_t sizeAdd, uint8_t sizeMask, uint8_t sizeSub, uint8_t textureOffset) {
+  int16_t arg0 = (int16_t)((uint16_t)(textureOffset << 8) | ((uint8_t)sizeAdd & 0xFF));
+  int16_t arg1 = (int16_t)((uint16_t)(sizeMask << 8) | sizeSub);
+  t3d_state_set_vertex_fx(T3D_VERTEX_FX_NONE, arg0, arg1);
 }
 
 // Vertex-buffer helpers:

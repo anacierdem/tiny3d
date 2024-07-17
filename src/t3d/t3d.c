@@ -16,10 +16,13 @@ _Static_assert(RSP_T3D_CODE_RDPQ_Triangle_Send_Async < RSP_T3D_CODE_CLIPPING_COD
 _Static_assert(RSP_T3D_CODE_RDPQ_Triangle_Send_End < RSP_T3D_CODE_CLIPPING_CODE_TARGET, "Triangle functions must come before the clipping code!");
 _Static_assert(RSP_T3D_CODE_RSPQCmd_RdpAppendBuffer < RSP_T3D_CODE_CLIPPING_CODE_TARGET, "Triangle functions must come before the clipping code!");
 
+_Static_assert((RSP_T3D_CODE_PTCL_T3DCmd_DrawParticles_End+8) < RSP_T3D_CODE_T3DCmd_LoadUcode, "Particle functions must not override the ucode loading function!");
+
 _Static_assert(RSP_T3D_CODE_CLIPPING_CODE_TARGET % 8 == 0, "Clipping code must be aligned to 8 bytes!");
 _Static_assert(RSP_T3D_CODE_CLIPPING_CODE_TARGET == RSP_T3D_CODE_CLIP_clipTriangle, "Clipping code and target must have the same address");
 _Static_assert(RSP_T3D_CODE_CLIPPING_CODE_TARGET == RSP_T3D_CODE_PTCL_T3DCmd_DrawParticles, "Particle code and target must have the same address");
 _Static_assert(RSP_T3D_CODE_CLIPPING_CODE_TARGET == RSP_T3D_CODE_T3DCmd_VertLoad, "Vertex-Load and target must have the same address");
+
 
 DEFINE_RSP_UCODE(rsp_tiny3d);
 DEFINE_RSP_UCODE(rsp_tiny3d_clipping);
@@ -66,7 +69,13 @@ void t3d_init(T3DInitParams params)
 
   // backup the original vertex loading function, that part can be replaced at runtime both in IMEM & RDRAM
   uint8_t *vertexFuncAddr = rsp_tiny3d.code + (RSP_T3D_CODE_T3DCmd_VertLoad & 0xFFF);
-  rspVertexFuncSize = RSP_T3D_CODE_T3DCmd_SetScreenSize - RSP_T3D_CODE_T3DCmd_VertLoad + 7;
+  rspVertexFuncSize = RSP_T3D_CODE_T3DCmd_SetScreenSize - RSP_T3D_CODE_T3DCmd_VertLoad;
+
+  uint32_t articleFuncSize = RSP_T3D_CODE_PTCL_OVERLAY_CODE_END - RSP_T3D_CODE_PTCL_T3DCmd_DrawParticles;
+  if(articleFuncSize > rspVertexFuncSize) {
+    rspVertexFuncSize = articleFuncSize;
+  }
+
   rspVertexFuncSize = (rspVertexFuncSize + 7) & ~7;
 
   rspVertexFuncBackup = malloc_uncached(rspVertexFuncSize);
@@ -248,7 +257,8 @@ void t3d_pipeline_load(enum T3DPipeline pipeline) {
 
   switch (pipeline) {
     case T3D_PIPELINE_DEFAULT: default:
-      size = rspVertexFuncSize;
+      size = RSP_T3D_CODE_PTCL_OVERLAY_CODE_END - RSP_T3D_CODE_PTCL_T3DCmd_DrawParticles;
+      size = rspVertexFuncSize > size ? rspVertexFuncSize : size;
       addrIn = PhysicalAddr(rspVertexFuncBackup);
     break;
     case T3D_PIPELINE_PARTICLES:
